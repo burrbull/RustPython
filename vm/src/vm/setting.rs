@@ -2,6 +2,7 @@
 use std::ffi::OsString;
 
 /// Struct containing all kind of settings for the python vm.
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct Settings {
     /// -d command line switch

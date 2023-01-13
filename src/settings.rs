@@ -2,6 +2,7 @@ use clap::{App, AppSettings, Arg, ArgMatches};
 use rustpython_vm::Settings;
 use std::{env, str::FromStr};
 
+#[derive(Debug)]
 pub enum RunMode {
     ScriptInteractive(Option<String>, bool),
     Command(String),
@@ -313,6 +314,7 @@ fn settings_from(matches: &ArgMatches) -> (Settings, RunMode) {
         Ok(s) => s.parse::<u32>().ok().map(Some),
         Err(_) => Some(None),
     };
+
     settings.hash_seed = hash_seed.unwrap_or_else(|| {
         error!("Fatal Python init error: PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]");
         // TODO: Need to change to ExitCode or Termination
