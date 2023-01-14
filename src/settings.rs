@@ -13,9 +13,7 @@ pub enum RunMode {
 pub fn opts_with_clap() -> (Settings, RunMode) {
     let app = Command::new("RustPython");
     let matches = parse_arguments(app);
-    let settings = settings_from(&matches);
-    dbg!(&settings);
-    settings
+    settings_from(&matches)
 }
 
 fn parse_arguments(app: Command) -> ArgMatches {
@@ -24,15 +22,6 @@ fn parse_arguments(app: Command) -> ArgMatches {
         .author(crate_authors!())
         .about("Rust implementation of the Python language")
         .override_usage("rustpython [OPTIONS] [-c CMD | -m MODULE | FILE] [PYARGS]...")
-        .arg(
-            Arg::new("pyargs")
-                .action(ArgAction::Append)
-                .allow_hyphen_values(true)
-                .trailing_var_arg(true)
-                .value_name("PYARGS")
-                .num_args(1..)
-                .help("run the given string as a program"),
-        )
         .arg(
             Arg::new("optimize")
                 .short('O')
@@ -127,6 +116,15 @@ fn parse_arguments(app: Command) -> ArgMatches {
                     "force the stdout and stderr streams to be unbuffered; \
                         this option has no effect on stdin; also PYTHONUNBUFFERED=x",
                 ),
+        )
+        .arg(
+            Arg::new("pyargs")
+                .action(ArgAction::Append)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .value_name("PYARGS")
+                .num_args(1..)
+                .help("run the given string as a program"),
         );
     #[cfg(feature = "flame-it")]
     let app = app
@@ -253,57 +251,33 @@ fn settings_from(matches: &ArgMatches) -> (Settings, RunMode) {
         settings.warnopts.extend(warnings.cloned());
     }
 
-    let (mode, argv) = if let Some(pyargs) = matches.get_raw("pyargs") {
-        let pyargs: Vec<_> = pyargs.collect();
-        dbg!(&pyargs);
-        let matches= Command::new("subcommand")
-        .trailing_var_arg(true)
-        .arg(
-            Arg::new("c")
-                .short('c')
-                .action(ArgAction::Append)
-                .allow_hyphen_values(true)
-                .trailing_var_arg(true)
-                .value_name("cmd, args")
-                .num_args(1..)
-                .help("run the given string as a program"),
-        )
-        .arg(
-            Arg::new("m")
-                .short('m')
-                .action(ArgAction::Append)
-                .allow_hyphen_values(true)
-                .trailing_var_arg(true)
-                .value_name("module, args")
-                .num_args(1..)
-                .help("run library module as script"),
-        )
-        .arg(
-            Arg::new("install_pip")
-                .long("install-pip")
-                .action(ArgAction::Append)
-                .allow_hyphen_values(true)
-                .trailing_var_arg(true)
-                .value_name("get-pip args")
-                .help("install the pip package manager for rustpython; \
-                        requires rustpython be build with the ssl feature enabled."
-                ),
-        ).get_matches_from(std::iter::once(std::ffi::OsStr::new("myprog")).chain(pyargs.iter().cloned()));
-        if let Some(mut cmd) = matches.get_many::<String>("c") {
-            let command = cmd.next().expect("clap ensure this exists");
+    let (mode, argv) = if let Some(mut pyargs) = matches.get_many::<String>("pyargs") {
+        let first = pyargs.next().expect("clap ensure this exists");
+        if let Some(first) = first.strip_prefix("-c") {
+            let first = first.trim_start();
+            let command = if !first.is_empty() {
+                first.to_string()
+            } else {
+                pyargs.next().expect("command name is absent").into()
+            };
             let argv = std::iter::once("-c".to_owned())
-                .chain(cmd.cloned())
+                .chain(pyargs.cloned())
                 .collect();
-            (RunMode::Command(command.clone()), argv)
-        } else if let Some(mut cmd) = matches.get_many::<String>("m") {
-            let module = cmd.next().expect("clap ensure this exists");
+            (RunMode::Command(command), argv)
+        } else if let Some(first) = first.strip_prefix("-m") {
+            let first = first.trim_start();
+            let module = if !first.is_empty() {
+                first.to_string()
+            } else {
+                pyargs.next().expect("module name is absent").into()
+            };
             let argv = std::iter::once("PLACEHOLDER".to_owned())
-                .chain(cmd.cloned())
+                .chain(pyargs.cloned())
                 .collect();
-            (RunMode::Module(module.to_string()), argv)
-        } else if let Some(get_pip_args) = matches.get_many::<String>("install_pip") {
+            (RunMode::Module(module), argv)
+        } else if first == "--install_pip" {
             settings.isolated = true;
-            let mut args: Vec<_> = get_pip_args.cloned().collect();
+            let mut args: Vec<_> = pyargs.cloned().collect();
             if args.is_empty() {
                 args.push("ensurepip".to_owned());
                 args.push("--upgrade".to_owned());
@@ -316,8 +290,8 @@ fn settings_from(matches: &ArgMatches) -> (Settings, RunMode) {
             };
             (mode, args)
         } else {
-            let argv: Vec<_> = pyargs.iter().flat_map(|s| s.to_str()).map(|s| s.to_string()).collect();
-            let script = argv[0].clone();
+            let argv: Vec<_> = std::iter::once(first).chain(pyargs).cloned().collect();
+            let script = first.clone();
             (
                 RunMode::ScriptInteractive(Some(script), matches.get_flag("inspect")),
                 argv,
