@@ -13,51 +13,25 @@ pub enum RunMode {
 pub fn opts_with_clap() -> (Settings, RunMode) {
     let app = Command::new("RustPython");
     let matches = parse_arguments(app);
-    settings_from(&matches)
+    let settings = settings_from(&matches);
+    dbg!(&settings);
+    settings
 }
 
 fn parse_arguments(app: Command) -> ArgMatches {
     let app = app
-        .trailing_var_arg(true)
         .version(crate_version!())
         .author(crate_authors!())
         .about("Rust implementation of the Python language")
         .override_usage("rustpython [OPTIONS] [-c CMD | -m MODULE | FILE] [PYARGS]...")
         .arg(
-            Arg::new("script")
-                .required(false)
-                .action(ArgAction::Append)
-                //.allow_hyphen_values(true)
-                .value_name("script, args")
-                .num_args(1..)
-        )
-        .arg(
-            Arg::new("c")
-                .short('c')
+            Arg::new("pyargs")
                 .action(ArgAction::Append)
                 .allow_hyphen_values(true)
-                .value_name("cmd, args")
+                .trailing_var_arg(true)
+                .value_name("PYARGS")
                 .num_args(1..)
                 .help("run the given string as a program"),
-        )
-        .arg(
-            Arg::new("m")
-                .short('m')
-                .action(ArgAction::Append)
-                .allow_hyphen_values(true)
-                .value_name("module, args")
-                .num_args(1..)
-                .help("run library module as script"),
-        )
-        .arg(
-            Arg::new("install_pip")
-                .long("install-pip")
-                .action(ArgAction::Append)
-                .allow_hyphen_values(true)
-                .value_name("get-pip args")
-                .help("install the pip package manager for rustpython; \
-                        requires rustpython be build with the ssl feature enabled."
-                ),
         )
         .arg(
             Arg::new("optimize")
@@ -279,39 +253,76 @@ fn settings_from(matches: &ArgMatches) -> (Settings, RunMode) {
         settings.warnopts.extend(warnings.cloned());
     }
 
-    let (mode, argv) = if let Some(mut cmd) = matches.get_many::<String>("c") {
-        let command = cmd.next().expect("clap ensure this exists");
-        let argv = std::iter::once("-c".to_owned())
-            .chain(cmd.cloned())
-            .collect();
-        (RunMode::Command(command.clone()), argv)
-    } else if let Some(mut cmd) = matches.get_many::<String>("m") {
-        let module = cmd.next().expect("clap ensure this exists");
-        let argv = std::iter::once("PLACEHOLDER".to_owned())
-            .chain(cmd.cloned())
-            .collect();
-        (RunMode::Module(module.to_string()), argv)
-    } else if let Some(get_pip_args) = matches.get_many::<String>("install_pip") {
-        settings.isolated = true;
-        let mut args: Vec<_> = get_pip_args.cloned().collect();
-        if args.is_empty() {
-            args.push("ensurepip".to_owned());
-            args.push("--upgrade".to_owned());
-            args.push("--default-pip".to_owned());
-        }
-        let installer = args[0].clone();
-        let mode = match installer.as_str() {
-            "ensurepip" | "get-pip" => RunMode::InstallPip(installer),
-            _ => panic!("--install-pip takes ensurepip or get-pip as first argument"),
-        };
-        (mode, args)
-    } else if let Some(argv) = matches.get_many::<String>("script") {
-        let argv: Vec<_> = argv.cloned().collect();
-        let script = argv[0].clone();
-        (
-            RunMode::ScriptInteractive(Some(script), matches.get_flag("inspect")),
-            argv,
+    let (mode, argv) = if let Some(pyargs) = matches.get_raw("pyargs") {
+        let pyargs: Vec<_> = pyargs.collect();
+        dbg!(&pyargs);
+        let matches= Command::new("subcommand")
+        .trailing_var_arg(true)
+        .arg(
+            Arg::new("c")
+                .short('c')
+                .action(ArgAction::Append)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .value_name("cmd, args")
+                .num_args(1..)
+                .help("run the given string as a program"),
         )
+        .arg(
+            Arg::new("m")
+                .short('m')
+                .action(ArgAction::Append)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .value_name("module, args")
+                .num_args(1..)
+                .help("run library module as script"),
+        )
+        .arg(
+            Arg::new("install_pip")
+                .long("install-pip")
+                .action(ArgAction::Append)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .value_name("get-pip args")
+                .help("install the pip package manager for rustpython; \
+                        requires rustpython be build with the ssl feature enabled."
+                ),
+        ).get_matches_from(std::iter::once(std::ffi::OsStr::new("myprog")).chain(pyargs.iter().cloned()));
+        if let Some(mut cmd) = matches.get_many::<String>("c") {
+            let command = cmd.next().expect("clap ensure this exists");
+            let argv = std::iter::once("-c".to_owned())
+                .chain(cmd.cloned())
+                .collect();
+            (RunMode::Command(command.clone()), argv)
+        } else if let Some(mut cmd) = matches.get_many::<String>("m") {
+            let module = cmd.next().expect("clap ensure this exists");
+            let argv = std::iter::once("PLACEHOLDER".to_owned())
+                .chain(cmd.cloned())
+                .collect();
+            (RunMode::Module(module.to_string()), argv)
+        } else if let Some(get_pip_args) = matches.get_many::<String>("install_pip") {
+            settings.isolated = true;
+            let mut args: Vec<_> = get_pip_args.cloned().collect();
+            if args.is_empty() {
+                args.push("ensurepip".to_owned());
+                args.push("--upgrade".to_owned());
+                args.push("--default-pip".to_owned());
+            }
+            let installer = args[0].clone();
+            let mode = match installer.as_str() {
+                "ensurepip" | "get-pip" => RunMode::InstallPip(installer),
+                _ => panic!("--install-pip takes ensurepip or get-pip as first argument"),
+            };
+            (mode, args)
+        } else {
+            let argv: Vec<_> = pyargs.iter().flat_map(|s| s.to_str()).map(|s| s.to_string()).collect();
+            let script = argv[0].clone();
+            (
+                RunMode::ScriptInteractive(Some(script), matches.get_flag("inspect")),
+                argv,
+            )
+        }
     } else {
         (RunMode::ScriptInteractive(None, true), vec!["".to_owned()])
     };
